@@ -1,23 +1,42 @@
-import * as L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
 
-type Pos = { x: number; y: number };
+type Pos  = { x: number; y: number };
 type Size = { w: number; h: number };
 
 interface OsmNode { type: "node"; id: number; lat: number; lon: number }
 interface OsmWay  { type: "way";  id: number; nodes: number[] }
 type OverpassEl = OsmNode | OsmWay;
 
+type GJFeature = {
+  type: "Feature";
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+  properties: { dark: number; phase: "surround" | "fill" };
+};
+type GJCollection = { type: "FeatureCollection"; features: GJFeature[] };
+type Session      = { sourceId: string; layerIds: string[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-async function fetchStreets(bounds: L.LatLngBounds): Promise<OverpassEl[]> {
-  const s = bounds.getSouth(), w = bounds.getWest(), n = bounds.getNorth(), e = bounds.getEast();
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+];
+
+async function fetchStreets(s: number, w: number, n: number, e: number): Promise<OverpassEl[]> {
   const q = `[out:json][timeout:30];(way["highway"](${s},${w},${n},${e}););out body;>;out skel qt;`;
-  const res = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(q)}`);
-  if (!res.ok) throw new Error(`Overpass ${res.status}`);
-  return (await res.json()).elements;
+  let lastErr = "";
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const res = await fetch(`${endpoint}?data=${encodeURIComponent(q)}`);
+      if (res.ok) return (await res.json()).elements;
+      lastErr = `${res.status}`;
+      if (res.status !== 504 && res.status !== 429) break;
+    } catch { lastErr = "network error"; }
+  }
+  throw new Error(`Overpass failed (${lastErr})`);
 }
 
 function loadPixels(url: string): Promise<{ data: Uint8ClampedArray; w: number; h: number }> {
@@ -43,11 +62,7 @@ function sampleB(data: Uint8ClampedArray, iw: number, ih: number, rx: number, ry
   return (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) / 255;
 }
 
-// Clips a way to only the nodes that are (a) inside the image bounds and
-// (b) on actual content pixels (brightness below threshold).
-// Both geographic boundary crossings and bright/transparent pixels break the run.
-// Returns clipped segments plus the average brightness of included nodes.
-const CONTENT_THRESHOLD = 0.85; // pixels brighter than this are treated as background
+const CONTENT_THRESHOLD = 0.85;
 
 function clipToContent(
   coords: [number, number][],
@@ -57,228 +72,273 @@ function clipToContent(
   const segments: [number, number][][] = [];
   let current: [number, number][] = [];
   let bSum = 0, bCount = 0;
-
   for (const [lat, lon] of coords) {
     const rx = (lon - west) / lngR;
     const ry = 1 - (lat - south) / latR;
-
     const inBounds = rx >= 0 && rx <= 1 && ry >= 0 && ry <= 1;
     const b = inBounds ? sampleB(data, iw, ih, rx, ry) : 1;
-
     if (inBounds && b < CONTENT_THRESHOLD) {
-      current.push([lat, lon]);
-      bSum += b; bCount++;
+      current.push([lat, lon]); bSum += b; bCount++;
     } else {
       if (current.length >= 2) segments.push(current);
       current = [];
     }
   }
   if (current.length >= 2) segments.push(current);
-
   return { segments, b: bCount > 0 ? bSum / bCount : 1 };
-}
-
-function streetStyle(b: number, isOutline: boolean): L.PolylineOptions {
-  const dark = 1 - b;
-  return {
-    color: "#ffffff",
-    opacity: isOutline ? 0.15 + dark * 0.80 : 0.12 + dark * 0.55,
-    weight:  isOutline ? 0.5  + dark * 2.5  : 0.3  + dark * 1.2,
-    interactive: false,
-  };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function ImageMapPage() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapRef          = useRef<L.Map | null>(null);
-  const rendererRef     = useRef<L.Canvas | null>(null);
-  const layerRef        = useRef<L.LayerGroup | null>(null);
+  const mapRef          = useRef<maplibregl.Map | null>(null);
+  const mapReadyRef     = useRef(false);
   const abortRef        = useRef(false);
   const finishRef       = useRef(false);
 
-  // Per-draw-session undo stack
-  const sessionsRef = useRef<L.Polyline[][]>([]);
-  const pixelsRef   = useRef<{ data: Uint8ClampedArray; w: number; h: number } | null>(null);
+  const sessionsRef    = useRef<Session[]>([]);
+  const pixelsRef      = useRef<{ data: Uint8ClampedArray; w: number; h: number } | null>(null);
+  const sessionCounter = useRef(0);
 
-  // Stable overlay position refs (avoid stale closures)
-  const posRef  = useRef<Pos>({ x: 0, y: 0 });
-  const sizeRef = useRef<Size>({ w: 300, h: 300 });
+  const posRef         = useRef<Pos>({ x: 0, y: 0 });
+  const sizeRef        = useRef<Size>({ w: 300, h: 300 });
+  const aspectRatioRef = useRef(1);
 
-  const [imageUrl,       setImageUrl]       = useState<string | null>(null);
-  const [pos,            setPos]            = useState<Pos>({ x: 0, y: 0 });
-  const [size,           setSize]           = useState<Size>({ w: 300, h: 300 });
-  const [overlayOpacity, setOverlayOpacity] = useState(0.5);
-  const [status,         setStatus]         = useState<string | null>(null);
-  const [isDrawing,      setIsDrawing]      = useState(false);
-  const [drawn,          setDrawn]          = useState(0);
-  const [sessionCount,   setSessionCount]   = useState(0);
-  const [isPrinted,      setIsPrinted]      = useState(false);
+  const [imageUrl,  setImageUrl]  = useState<string | null>(null);
+  const [pos,       setPos]       = useState<Pos>({ x: 0, y: 0 });
+  const [size,      setSize]      = useState<Size>({ w: 300, h: 300 });
+  const [status,    setStatus]    = useState<string | null>(null);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [isPrinted, setIsPrinted] = useState(false);
 
   useEffect(() => { posRef.current  = pos;  }, [pos]);
   useEffect(() => { sizeRef.current = size; }, [size]);
 
-  // ── Map init ──────────────────────────────────────────────────────────────────
+  // ── Map init — starts flat (pitch=0) so image overlay aligns perfectly ────────
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
-    const map = L.map(mapContainerRef.current, { center: [47.3769, 8.5417], zoom: 14, zoomControl: false });
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      attribution: '© <a href="https://www.openstreetmap.org/copyright">OSM</a> © <a href="https://carto.com/">CARTO</a>',
-      subdomains: "abcd", maxZoom: 19,
-    }).addTo(map);
-    L.control.zoom({ position: "bottomright" }).addTo(map);
-    rendererRef.current = L.canvas({ padding: 0.5 });
-    layerRef.current    = L.layerGroup().addTo(map);
-    mapRef.current      = map;
+
+    const map = new maplibregl.Map({
+      container: mapContainerRef.current,
+      style: "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+      center: [8.5417, 47.3769],
+      zoom: 14,
+      pitch: 0,
+      bearing: 0,
+    });
+
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+
+    map.once("load", () => {
+      // 3D buildings — visible once the map tilts after drawing
+      try {
+        const sources = map.getStyle().sources as Record<string, { type: string }>;
+        const vectorSrc = Object.keys(sources).find(k => sources[k].type === "vector");
+        if (vectorSrc) {
+          const firstSymbol = map.getStyle().layers.find(l => l.type === "symbol")?.id;
+          map.addLayer({
+            id: "sa-3d-buildings",
+            type: "fill-extrusion",
+            source: vectorSrc,
+            "source-layer": "building",
+            minzoom: 14,
+            paint: {
+              "fill-extrusion-color":   "#1e2030",
+              "fill-extrusion-height":  ["coalesce", ["get", "render_height"], ["get", "height"], 8],
+              "fill-extrusion-base":    ["coalesce", ["get", "render_min_height"], 0],
+              "fill-extrusion-opacity": 0.9,
+            },
+          }, firstSymbol);
+        }
+      } catch { /* style doesn't support building extrusion */ }
+
+      mapReadyRef.current = true;
+    });
+
+    mapRef.current = map;
     return () => {
       abortRef.current = true;
       map.remove();
       mapRef.current = null;
+      mapReadyRef.current = false;
     };
   }, []);
+
+  // Animate camera to 3D when in view mode, back to flat when repositioning
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (isPrinted || isDrawing) {
+      map.easeTo({ pitch: 45, bearing: -15, duration: 1400, easing: t => t < 0.5 ? 2*t*t : -1+(4-2*t)*t });
+    } else {
+      map.easeTo({ pitch: 0, bearing: 0, duration: 700 });
+    }
+  }, [isPrinted, isDrawing]);
 
   // ── Upload ────────────────────────────────────────────────────────────────────
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (imageUrl) URL.revokeObjectURL(imageUrl);
-    setImageUrl(URL.createObjectURL(file));
+    const url = URL.createObjectURL(file);
+    setImageUrl(url);
     pixelsRef.current = null;
-    sessionsRef.current.forEach(s => s.forEach(p => layerRef.current?.removeLayer(p)));
-    sessionsRef.current = [];
-    setIsPrinted(false);
-    setDrawn(0); setSessionCount(0); setStatus(null);
-    if (mapContainerRef.current) {
-      const { width, height } = mapContainerRef.current.getBoundingClientRect();
-      const w = Math.min(340, width * 0.38);
-      const p = { x: width / 2 - w / 2, y: height / 2 - w / 2 };
-      const s = { w, h: w };
-      setPos(p); setSize(s);
-      posRef.current = p; sizeRef.current = s;
-    }
+    clearSessions();
+    setIsPrinted(false); setStatus(null);
+
+    const img = new Image();
+    img.onload = () => {
+      const ar = img.naturalWidth / img.naturalHeight;
+      aspectRatioRef.current = ar;
+      if (mapContainerRef.current) {
+        const { width, height } = mapContainerRef.current.getBoundingClientRect();
+        const w = Math.min(320, width * 0.36);
+        const h = w / ar;
+        const p = { x: width / 2 - w / 2, y: height / 2 - h / 2 };
+        const s = { w, h };
+        posRef.current = p; sizeRef.current = s;
+        setPos(p); setSize(s);
+      }
+    };
+    img.src = url;
   };
 
+  // ── Session helpers ───────────────────────────────────────────────────────────
+  const clearSessions = () => {
+    const map = mapRef.current;
+    sessionsRef.current.forEach(({ sourceId, layerIds }) => {
+      if (map) {
+        layerIds.forEach(id => { try { map.removeLayer(id); } catch {} });
+        try { map.removeSource(sourceId); } catch {}
+      }
+    });
+    sessionsRef.current = [];
+  };
 
   // ── Draw ──────────────────────────────────────────────────────────────────────
   const handleDraw = async () => {
     const map = mapRef.current;
-    if (!map || !imageUrl || isDrawing) return;
+    if (!map || !mapReadyRef.current || !imageUrl || isDrawing) return;
 
     abortRef.current  = false;
     finishRef.current = false;
     setIsDrawing(true);
     setStatus("Fetching streets…");
+    // camera tilt starts via the useEffect above (isDrawing → true)
+
+    const sessionId = `sa-session-${sessionCounter.current++}`;
+    const geojson: GJCollection = { type: "FeatureCollection", features: [] };
+    let sessionLayers: string[] = [];
 
     try {
-      // Compute bounds from current overlay screen position → lat/lng
       const { x, y } = posRef.current;
       const { w, h } = sizeRef.current;
-      const sw     = map.containerPointToLatLng(L.point(x,     y + h));
-      const ne     = map.containerPointToLatLng(L.point(x + w, y    ));
-      const bounds = L.latLngBounds(sw, ne);
+      // Bounds must be computed at pitch=0 (before tilt animates)
+      // Use the map's current unproject which accounts for actual camera state
+      const sw = map.unproject([x,     y + h]);
+      const ne = map.unproject([x + w, y    ]);
+      const south = sw.lat, west = sw.lng, north = ne.lat, east = ne.lng;
+      const latR = north - south, lngR = east - west;
 
-      const elements = await fetchStreets(bounds);
+      const elements = await fetchStreets(south, west, north, east);
       if (abortRef.current) return;
 
       const nodes = new Map<number, [number, number]>();
-      for (const el of elements) {
-        if (el.type === "node") nodes.set(el.id, [el.lat, el.lon]);
-      }
+      for (const el of elements) if (el.type === "node") nodes.set(el.id, [el.lat, el.lon]);
 
       if (!pixelsRef.current) pixelsRef.current = await loadPixels(imageUrl);
       const px = pixelsRef.current;
       if (abortRef.current) return;
 
-      const south = bounds.getSouth(), west = bounds.getWest();
-      const latR  = bounds.getNorth() - south;
-      const lngR  = bounds.getEast()  - west;
-
-      // WayData holds clipped segments (each a run of in-bounds nodes) + avg brightness
       type WayData = { segments: [number, number][][]; b: number };
-      const surroundings: WayData[] = [];
-      const fill:         WayData[] = [];
+      const surroundings: WayData[] = [], fill: WayData[] = [];
 
       for (const el of elements) {
         if (el.type !== "way") continue;
-
         const allCoords: [number, number][] = [];
-        for (const id of el.nodes) {
-          const n = nodes.get(id);
-          if (n) allCoords.push(n);
-        }
+        for (const id of el.nodes) { const n = nodes.get(id); if (n) allCoords.push(n); }
         if (allCoords.length < 2) continue;
-
-        // Clip to content: drops out-of-bounds nodes AND bright/transparent pixels
         const { segments, b } = clipToContent(allCoords, south, west, latR, lngR, px.data, px.w, px.h);
-        if (segments.length === 0) continue; // nothing to draw
-
+        if (segments.length === 0) continue;
         (b < 0.45 ? surroundings : fill).push({ segments, b });
       }
-
       surroundings.sort((a, b) => a.b - b.b);
       fill.sort((a, b) => a.b - b.b);
 
-      const total = surroundings.length + fill.length;
-      setStatus(`Drawing ${total} streets…`);
+      setStatus(`Drawing ${surroundings.length + fill.length} streets…`);
 
-      const renderer    = rendererRef.current!;
-      const layer       = layerRef.current!;
-      const newSession: L.Polyline[] = [];
+      map.addSource(sessionId, { type: "geojson", data: geojson });
+      map.addLayer({
+        id: `${sessionId}-surround`, type: "line", source: sessionId,
+        filter: ["==", ["get", "phase"], "surround"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color":   "#ffffff",
+          "line-opacity": ["interpolate", ["linear"], ["get", "dark"], 0, 0.15, 1, 0.95],
+          "line-width":   ["interpolate", ["linear"], ["get", "dark"], 0, 0.5,  1, 3.0 ],
+        },
+      });
+      map.addLayer({
+        id: `${sessionId}-fill`, type: "line", source: sessionId,
+        filter: ["==", ["get", "phase"], "fill"],
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color":   "#ffffff",
+          "line-opacity": ["interpolate", ["linear"], ["get", "dark"], 0, 0.12, 1, 0.67],
+          "line-width":   ["interpolate", ["linear"], ["get", "dark"], 0, 0.3,  1, 1.5 ],
+        },
+      });
+      sessionLayers = [`${sessionId}-surround`, `${sessionId}-fill`];
 
-      // Draw 3 ways per rAF tick — streets appear visibly one by one.
-      // If finishRef is set, flushes all remaining ways synchronously in one go.
-      const drawGroup = (ways: WayData[], isOutline: boolean): Promise<void> =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const src = () => map.getSource(sessionId) as any;
+
+      const drawGroup = (ways: WayData[], phase: "surround" | "fill"): Promise<void> =>
         new Promise(resolve => {
           let i = 0;
+          const push = ({ segments, b }: WayData) => {
+            const dark = 1 - b;
+            for (const seg of segments)
+              geojson.features.push({
+                type: "Feature",
+                geometry: { type: "LineString", coordinates: seg.map(([lat, lon]) => [lon, lat]) },
+                properties: { dark, phase },
+              });
+          };
           const step = () => {
             if (abortRef.current) { resolve(); return; }
             if (finishRef.current) {
-              for (; i < ways.length; i++) {
-                const { segments, b } = ways[i];
-                const style = { ...streetStyle(b, isOutline), renderer };
-                for (const seg of segments) {
-                  const poly = L.polyline(seg, style);
-                  poly.addTo(layer);
-                  newSession.push(poly);
-                }
-              }
-              setDrawn(ways.length);
-              resolve();
-              return;
+              while (i < ways.length) push(ways[i++]);
+              src().setData(geojson); resolve(); return;
             }
-            const end = Math.min(i + 3, ways.length);
-            for (; i < end; i++) {
-              const { segments, b } = ways[i];
-              const style = { ...streetStyle(b, isOutline), renderer };
-              for (const seg of segments) {
-                const poly = L.polyline(seg, style);
-                poly.addTo(layer);
-                newSession.push(poly);
-              }
-            }
-            setDrawn(i);
+            const end = Math.min(i + 15, ways.length);
+            while (i < end) push(ways[i++]);
+            src().setData(geojson);
             if (i < ways.length) requestAnimationFrame(step);
             else resolve();
           };
           requestAnimationFrame(step);
         });
 
-      await drawGroup(surroundings, true);
-      if (!abortRef.current && !finishRef.current) {
-        await new Promise<void>(r => setTimeout(r, 300));
-      }
-      await drawGroup(fill, false);
+      await drawGroup(surroundings, "surround");
+      if (!abortRef.current && !finishRef.current) await new Promise<void>(r => setTimeout(r, 300));
+      await drawGroup(fill, "fill");
 
-      // Commit whatever was drawn — whether animation completed or user hit Finish
       if (!abortRef.current) {
-        sessionsRef.current.push(newSession);
-        setSessionCount(sessionsRef.current.length);
+        sessionsRef.current.push({ sourceId: sessionId, layerIds: sessionLayers });
         setStatus(null);
         setIsPrinted(true);
+      } else {
+        sessionLayers.forEach(id => { try { map.removeLayer(id); } catch {} });
+        try { map.removeSource(sessionId); } catch {}
       }
     } catch (err) {
-      if (!abortRef.current) setStatus(`Error: ${err instanceof Error ? err.message : "failed"}`);
+      if (!abortRef.current) {
+        sessionLayers.forEach(id => { try { map.removeLayer(id); } catch {} });
+        try { map.removeSource(sessionId); } catch {}
+        setStatus(`Error: ${err instanceof Error ? err.message : "failed"}`);
+      }
     } finally {
       if (!abortRef.current) setIsDrawing(false);
     }
@@ -286,24 +346,22 @@ export function ImageMapPage() {
 
   // ── Undo ──────────────────────────────────────────────────────────────────────
   const handleUndo = () => {
+    const map = mapRef.current;
     const last = sessionsRef.current.pop();
     if (!last) return;
-    last.forEach(p => layerRef.current?.removeLayer(p));
-    const count = sessionsRef.current.length;
-    setSessionCount(count);
-    setDrawn(0);
-    if (count === 0) setIsPrinted(false);
+    if (map) {
+      last.layerIds.forEach(id => { try { map.removeLayer(id); } catch {} });
+      try { map.removeSource(last.sourceId); } catch {}
+    }
+    if (sessionsRef.current.length === 0) setIsPrinted(false);
   };
 
   // ── Reset ─────────────────────────────────────────────────────────────────────
   const handleReset = () => {
-    if (imageUrl) URL.revokeObjectURL(imageUrl);
-    sessionsRef.current.forEach(s => s.forEach(p => layerRef.current?.removeLayer(p)));
-    sessionsRef.current = [];
+    clearSessions();
     pixelsRef.current = null;
-    setImageUrl(null);
-    setIsPrinted(false);
-    setDrawn(0); setSessionCount(0); setStatus(null);
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+    setImageUrl(null); setIsPrinted(false); setStatus(null);
   };
 
   // ── Drag / resize ─────────────────────────────────────────────────────────────
@@ -314,13 +372,13 @@ export function ImageMapPage() {
   >(null);
 
   const disableMap = () => {
-    mapRef.current?.dragging.disable();
-    mapRef.current?.scrollWheelZoom.disable();
+    mapRef.current?.dragPan.disable();
+    mapRef.current?.scrollZoom.disable();
     mapRef.current?.doubleClickZoom.disable();
   };
   const enableMap = () => {
-    mapRef.current?.dragging.enable();
-    mapRef.current?.scrollWheelZoom.enable();
+    mapRef.current?.dragPan.enable();
+    mapRef.current?.scrollZoom.enable();
     mapRef.current?.doubleClickZoom.enable();
   };
 
@@ -333,7 +391,8 @@ export function ImageMapPage() {
         const p = { x: ix.pos0.x + dx, y: ix.pos0.y + dy };
         setPos(p); posRef.current = p;
       } else {
-        const s = { w: Math.max(80, ix.sz0.w + dx), h: Math.max(80, ix.sz0.h + dy) };
+        const newW = Math.max(80, ix.sz0.w + dx);
+        const s = { w: newW, h: newW / aspectRatioRef.current };
         setSize(s); sizeRef.current = s;
       }
     };
@@ -366,11 +425,10 @@ export function ImageMapPage() {
 
       <div className="imap-panel">
         <div className="imap-header">
-          <span className="imap-brand">Outline Map</span>
+          <span className="imap-brand">Street Art</span>
           <p className="imap-how">Place an image on the map — real streets trace its shape.</p>
         </div>
 
-        {/* Before / during drawing */}
         {!isPrinted && (
           <>
             {!isDrawing && (
@@ -379,13 +437,9 @@ export function ImageMapPage() {
                 <input type="file" accept="image/*" onChange={handleUpload} hidden />
               </label>
             )}
-
             {imageUrl && !isDrawing && (
-              <button className="imap-draw-btn" onClick={handleDraw}>
-                Draw streets
-              </button>
+              <button className="imap-draw-btn" onClick={handleDraw}>Draw streets</button>
             )}
-
             {isDrawing && (
               <button className="imap-finish-btn" onClick={() => { finishRef.current = true; }}>
                 Finish
@@ -394,21 +448,17 @@ export function ImageMapPage() {
           </>
         )}
 
-        {/* After drawing: upload new image + undo */}
         {isPrinted && (
           <>
             <label className="imap-upload-btn">
               Upload image
               <input type="file" accept="image/*" onChange={handleUpload} hidden />
             </label>
-            <button className="imap-undo-btn" onClick={handleUndo}>
-              Undo last drawing
-            </button>
+            <button className="imap-undo-btn" onClick={handleUndo}>Undo last drawing</button>
             <button className="imap-reset-btn" onClick={handleReset}>Clear all</button>
           </>
         )}
 
-        {/* Status — only while actively fetching/drawing, not after */}
         {status && <div className="imap-status">{status}</div>}
       </div>
 
