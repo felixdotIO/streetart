@@ -112,6 +112,11 @@ export function ImageMapPage() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [isPrinted, setIsPrinted] = useState(false);
 
+  type GeoResult = { display_name: string; lat: string; lon: string };
+  const [searchQuery,   setSearchQuery]   = useState("");
+  const [searchResults, setSearchResults] = useState<GeoResult[]>([]);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => { posRef.current  = pos;  }, [pos]);
   useEffect(() => { sizeRef.current = size; }, [size]);
 
@@ -175,6 +180,29 @@ export function ImageMapPage() {
       map.easeTo({ pitch: 0, bearing: 0, duration: 700 });
     }
   }, [isPrinted, isDrawing]);
+
+  // ── Location search ───────────────────────────────────────────────────────────
+  const handleSearchInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const q = e.target.value;
+    setSearchQuery(q);
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    if (q.trim().length < 2) { setSearchResults([]); return; }
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5`,
+          { headers: { "Accept-Language": "en" } }
+        );
+        setSearchResults(await res.json());
+      } catch {}
+    }, 350);
+  };
+
+  const handleSearchSelect = (r: GeoResult) => {
+    mapRef.current?.flyTo({ center: [parseFloat(r.lon), parseFloat(r.lat)], zoom: 14, duration: 1200 });
+    setSearchQuery("");
+    setSearchResults([]);
+  };
 
   // ── Upload ────────────────────────────────────────────────────────────────────
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -427,6 +455,26 @@ export function ImageMapPage() {
         <div className="imap-header">
           <span className="imap-brand">Street Art</span>
           <p className="imap-how">Place an image on the map — real streets trace its shape.</p>
+        </div>
+
+        <div className="imap-search">
+          <input
+            className="imap-search-input"
+            type="text"
+            placeholder="Search location…"
+            value={searchQuery}
+            onChange={handleSearchInput}
+            onBlur={() => setTimeout(() => setSearchResults([]), 150)}
+          />
+          {searchResults.length > 0 && (
+            <div className="imap-search-results">
+              {searchResults.map((r, i) => (
+                <button key={i} className="imap-search-result" onMouseDown={() => handleSearchSelect(r)}>
+                  {r.display_name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         {!isPrinted && (
