@@ -513,82 +513,87 @@ export function ImageMapPage() {
     <div className="imap-root">
       <div ref={mapContainerRef} className="imap-map" />
 
-      <div className="imap-panel">
-        <div className="imap-header">
-          <span className="imap-brand">Street Art</span>
-          <p className="imap-how">Place an image on the map — real streets trace its shape. White areas are treated as transparent.</p>
-        </div>
-
-        <div className="imap-search">
-          <input
-            className="imap-search-input"
-            type="text"
-            placeholder="Search location…"
-            value={searchQuery}
-            onChange={handleSearchInput}
-            onBlur={() => setTimeout(() => setSearchResults([]), 150)}
-          />
-          {searchResults.length > 0 && (
-            <div className="imap-search-results">
-              {searchResults.map((r, i) => (
-                <button key={i} className="imap-search-result" onMouseDown={() => handleSearchSelect(r)}>
-                  {r.display_name}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {!isPrinted && (
-          <>
-            {!isDrawing && (
-              <>
-                <label className="imap-upload-btn">
-                  {imageUrl ? "Change image" : "Upload image"}
-                  <input type="file" accept="image/*" onChange={handleUpload} hidden />
-                </label>
-                <div className="imap-library-row">
-                  <button className="imap-library-toggle" onClick={() => setLibOpen(o => !o)}>
-                    {libOpen ? "Hide templates ↑" : "Use a template ↓"}
+      <div className="imap-panels">
+        {/* ── Search box ── */}
+        <div className="imap-box">
+          <div className="imap-header">
+            <span className="imap-brand">Street Art</span>
+            <p className="imap-how">Place an image — streets trace its shape. White is transparent.</p>
+          </div>
+          <div className="imap-search">
+            <input
+              className="imap-search-input"
+              type="text"
+              placeholder="Search location…"
+              value={searchQuery}
+              onChange={handleSearchInput}
+              onBlur={() => setTimeout(() => setSearchResults([]), 150)}
+            />
+            {searchResults.length > 0 && (
+              <div className="imap-search-results">
+                {searchResults.map((r, i) => (
+                  <button key={i} className="imap-search-result" onMouseDown={() => handleSearchSelect(r)}>
+                    {r.display_name}
                   </button>
-                  {libOpen && (
-                    <div className="imap-library">
-                      {LIBRARY.map(({ src, label }, i) => (
-                        <button key={src} className="imap-library-icon" onClick={() => handleLibrarySelect(libImages[i] ?? src)}>
-                          {libImages[i]
-                            ? <img src={libImages[i]} alt={label} />
-                            : <span className="imap-library-loading" />}
-                          <span className="imap-library-label">{label}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
+                ))}
+              </div>
             )}
-            {imageUrl && !isDrawing && (
-              <button className="imap-draw-btn" onClick={handleDraw}>Draw streets</button>
-            )}
-            {isDrawing && (
-              <button className="imap-finish-btn" onClick={() => { finishRef.current = true; }}>
-                Finish
-              </button>
-            )}
-          </>
-        )}
+          </div>
+        </div>
 
-        {isPrinted && (
-          <>
-            <label className="imap-upload-btn">
-              Upload image
-              <input type="file" accept="image/*" onChange={handleUpload} hidden />
-            </label>
-            <button className="imap-undo-btn" onClick={handleUndo}>Undo last drawing</button>
-            <button className="imap-reset-btn" onClick={handleReset}>Clear all</button>
-          </>
-        )}
+        {/* ── Upload box ── */}
+        <div className="imap-box">
+          {!isPrinted && (
+            <>
+              {!isDrawing && (
+                <>
+                  <label className="imap-upload-btn">
+                    {imageUrl ? "Change image" : "Upload image"}
+                    <input type="file" accept="image/*" onChange={handleUpload} hidden />
+                  </label>
+                  <div className="imap-library-row">
+                    <button className="imap-library-toggle" onClick={() => setLibOpen(o => !o)}>
+                      {libOpen ? "Hide templates ↑" : "Use a template ↓"}
+                    </button>
+                    {libOpen && (
+                      <div className="imap-library">
+                        {LIBRARY.map(({ src, label }, i) => (
+                          <button key={src} className="imap-library-icon" onClick={() => handleLibrarySelect(libImages[i] ?? src)}>
+                            {libImages[i]
+                              ? <img src={libImages[i]} alt={label} />
+                              : <span className="imap-library-loading" />}
+                            <span className="imap-library-label">{label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+              {imageUrl && !isDrawing && (
+                <button className="imap-draw-btn" onClick={handleDraw}>Draw streets</button>
+              )}
+              {isDrawing && (
+                <button className="imap-finish-btn" onClick={() => { finishRef.current = true; }}>
+                  Finish
+                </button>
+              )}
+            </>
+          )}
 
-        {status && <div className="imap-status">{status}</div>}
+          {isPrinted && (
+            <>
+              <label className="imap-upload-btn">
+                Upload image
+                <input type="file" accept="image/*" onChange={handleUpload} hidden />
+              </label>
+              <button className="imap-undo-btn" onClick={handleUndo}>Undo last drawing</button>
+              <button className="imap-reset-btn" onClick={handleReset}>Clear all</button>
+            </>
+          )}
+
+          {status && <div className="imap-status">{status}</div>}
+        </div>
       </div>
 
       {!imageUrl && <div className="imap-hint">Upload an image to place it on the map</div>}
