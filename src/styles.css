@@ -1270,7 +1270,7 @@ h4,
 .imap-library-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .imap-library-toggle {
@@ -1280,38 +1280,40 @@ h4,
   font-family: inherit;
   font-size: 11px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.32);
   cursor: pointer;
   text-align: left;
+  letter-spacing: 0.01em;
   transition: color 0.15s;
 }
 
 .imap-library-toggle:hover {
-  color: rgba(255, 255, 255, 0.55);
+  color: rgba(255, 255, 255, 0.65);
 }
 
 .imap-library {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 5px;
+  gap: 8px;
 }
 
 .imap-library-icon {
-  aspect-ratio: 1;
-  padding: 7px;
-  background: rgba(255, 255, 255, 0.92);
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  transition: background 0.13s, transform 0.1s;
+  gap: 6px;
+  padding: 10px 6px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s, transform 0.1s;
 }
 
 .imap-library-icon:hover {
-  background: #fff;
-  transform: scale(1.06);
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.18);
+  transform: translateY(-1px);
 }
 
 .imap-library-icon:active {
@@ -1319,10 +1321,27 @@ h4,
 }
 
 .imap-library-icon img {
-  width: 100%;
-  height: 100%;
+  width: 40px;
+  height: 40px;
   object-fit: contain;
   pointer-events: none;
+}
+
+.imap-library-label {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.38);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.imap-library-loading {
+  display: block;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .imap-search {

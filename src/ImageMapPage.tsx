@@ -19,6 +19,26 @@ type Session      = { sourceId: string; layerIds: string[] };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+async function removeWhiteBg(src: string): Promise<string> {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = img.naturalWidth; c.height = img.naturalHeight;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, c.width, c.height);
+      for (let i = 0; i < d.data.length; i += 4) {
+        const r = d.data[i], g = d.data[i + 1], b = d.data[i + 2];
+        if (r > 230 && g > 230 && b > 230) d.data[i + 3] = 0;
+      }
+      ctx.putImageData(d, 0, 0);
+      resolve(c.toDataURL());
+    };
+    img.src = src;
+  });
+}
+
 const OVERPASS_ENDPOINTS = [
   "https://overpass-api.de/api/interpreter",
   "https://overpass.kumi.systems/api/interpreter",
@@ -112,12 +132,18 @@ export function ImageMapPage() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [isPrinted, setIsPrinted] = useState(false);
   const [libOpen,   setLibOpen]   = useState(false);
+  const [libImages, setLibImages] = useState<string[]>([]);
 
+  const base = import.meta.env.BASE_URL;
   const LIBRARY = [
-    { src: "/streetart/library/calendar.svg", label: "Calendar" },
-    { src: "/streetart/library/map.svg",      label: "Map" },
-    { src: "/streetart/library/sparkle.svg",  label: "Sparkle" },
+    { src: `${base}library/Type=Calendar.png`,   label: "Calendar" },
+    { src: `${base}library/Type=Map.png`,         label: "Map"      },
+    { src: `${base}library/Promotion (1).png`,    label: "Sparkle"  },
   ];
+
+  useEffect(() => {
+    Promise.all(LIBRARY.map(({ src }) => removeWhiteBg(src))).then(setLibImages);
+  }, []);
 
   type GeoResult = { display_name: string; lat: string; lon: string };
   const [searchQuery,   setSearchQuery]   = useState("");
@@ -487,7 +513,7 @@ export function ImageMapPage() {
       <div className="imap-panel">
         <div className="imap-header">
           <span className="imap-brand">Street Art</span>
-          <p className="imap-how">Place an image on the map — real streets trace its shape.</p>
+          <p className="imap-how">Place an image on the map — real streets trace its shape. White areas are treated as transparent.</p>
         </div>
 
         <div className="imap-search">
@@ -512,13 +538,16 @@ export function ImageMapPage() {
 
         <div className="imap-library-row">
           <button className="imap-library-toggle" onClick={() => setLibOpen(o => !o)}>
-            {libOpen ? "Hide library" : "Choose from library"}
+            {libOpen ? "Hide library ↑" : "Use a template ↓"}
           </button>
           {libOpen && (
             <div className="imap-library">
-              {LIBRARY.map(({ src, label }) => (
-                <button key={src} className="imap-library-icon" title={label} onClick={() => handleLibrarySelect(src)}>
-                  <img src={src} alt={label} />
+              {LIBRARY.map(({ src, label }, i) => (
+                <button key={src} className="imap-library-icon" onClick={() => handleLibrarySelect(libImages[i] ?? src)}>
+                  {libImages[i]
+                    ? <img src={libImages[i]} alt={label} />
+                    : <span className="imap-library-loading" />}
+                  <span className="imap-library-label">{label}</span>
                 </button>
               ))}
             </div>
