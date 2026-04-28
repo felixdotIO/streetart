@@ -141,7 +141,7 @@ export function ImageMapPage() {
   const LIBRARY = [
     { src: `${base}library/Type=Calendar.png`,        label: "Calendar" },
     { src: `${base}library/Type=Map.png`,             label: "Map"      },
-    { src: `${base}library/Promotion%20(1).png`,      label: "Sparkle"  },
+    { src: `${base}library/Type=Promotion%20(1).png`,  label: "Sparkle"  },
   ];
 
   useEffect(() => {
