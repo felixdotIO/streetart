@@ -111,6 +111,13 @@ export function ImageMapPage() {
   const [status,    setStatus]    = useState<string | null>(null);
   const [isDrawing, setIsDrawing] = useState(false);
   const [isPrinted, setIsPrinted] = useState(false);
+  const [libOpen,   setLibOpen]   = useState(false);
+
+  const LIBRARY = [
+    { src: "/streetart/library/calendar.svg", label: "Calendar" },
+    { src: "/streetart/library/map.svg",      label: "Map" },
+    { src: "/streetart/library/sparkle.svg",  label: "Sparkle" },
+  ];
 
   type GeoResult = { display_name: string; lat: string; lon: string };
   const [searchQuery,   setSearchQuery]   = useState("");
@@ -202,6 +209,32 @@ export function ImageMapPage() {
     mapRef.current?.flyTo({ center: [parseFloat(r.lon), parseFloat(r.lat)], zoom: 14, duration: 1200 });
     setSearchQuery("");
     setSearchResults([]);
+  };
+
+  // ── Library select ────────────────────────────────────────────────────────────
+  const handleLibrarySelect = (src: string) => {
+    if (imageUrl) URL.revokeObjectURL(imageUrl);
+    setImageUrl(src);
+    setLibOpen(false);
+    pixelsRef.current = null;
+    clearSessions();
+    setIsPrinted(false); setStatus(null);
+
+    const img = new Image();
+    img.onload = () => {
+      const ar = img.naturalWidth / img.naturalHeight;
+      aspectRatioRef.current = ar;
+      if (mapContainerRef.current) {
+        const { width, height } = mapContainerRef.current.getBoundingClientRect();
+        const w = Math.min(320, width * 0.36);
+        const h = w / ar;
+        const p = { x: width / 2 - w / 2, y: height / 2 - h / 2 };
+        const s = { w, h };
+        posRef.current = p; sizeRef.current = s;
+        setPos(p); setSize(s);
+      }
+    };
+    img.src = src;
   };
 
   // ── Upload ────────────────────────────────────────────────────────────────────
@@ -471,6 +504,21 @@ export function ImageMapPage() {
               {searchResults.map((r, i) => (
                 <button key={i} className="imap-search-result" onMouseDown={() => handleSearchSelect(r)}>
                   {r.display_name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="imap-library-row">
+          <button className="imap-library-toggle" onClick={() => setLibOpen(o => !o)}>
+            {libOpen ? "Hide library" : "Choose from library"}
+          </button>
+          {libOpen && (
+            <div className="imap-library">
+              {LIBRARY.map(({ src, label }) => (
+                <button key={src} className="imap-library-icon" title={label} onClick={() => handleLibrarySelect(src)}>
+                  <img src={src} alt={label} />
                 </button>
               ))}
             </div>

@@ -1267,6 +1267,12 @@ h4,
   font-weight: 400;
 }
 
+.imap-library-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .imap-library-toggle {
   background: none;
   border: none;
@@ -1286,25 +1292,30 @@ h4,
 
 .imap-library {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
 }
 
 .imap-library-icon {
   aspect-ratio: 1;
-  padding: 5px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 6px;
+  padding: 7px;
+  background: rgba(255, 255, 255, 0.92);
+  border: none;
+  border-radius: 8px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.13s;
+  transition: background 0.13s, transform 0.1s;
 }
 
 .imap-library-icon:hover {
-  background: rgba(255, 255, 255, 0.13);
+  background: #fff;
+  transform: scale(1.06);
+}
+
+.imap-library-icon:active {
+  transform: scale(0.96);
 }
 
 .imap-library-icon img {
