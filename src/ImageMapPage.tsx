@@ -23,18 +23,21 @@ async function removeWhiteBg(src: string): Promise<string> {
   return new Promise(resolve => {
     const img = new Image();
     img.onload = () => {
-      const c = document.createElement("canvas");
-      c.width = img.naturalWidth; c.height = img.naturalHeight;
-      const ctx = c.getContext("2d")!;
-      ctx.drawImage(img, 0, 0);
-      const d = ctx.getImageData(0, 0, c.width, c.height);
-      for (let i = 0; i < d.data.length; i += 4) {
-        const r = d.data[i], g = d.data[i + 1], b = d.data[i + 2];
-        if (r > 230 && g > 230 && b > 230) d.data[i + 3] = 0;
-      }
-      ctx.putImageData(d, 0, 0);
-      resolve(c.toDataURL());
+      try {
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const ctx = c.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+        const d = ctx.getImageData(0, 0, c.width, c.height);
+        for (let i = 0; i < d.data.length; i += 4) {
+          const r = d.data[i], g = d.data[i + 1], b = d.data[i + 2];
+          if (r > 230 && g > 230 && b > 230) d.data[i + 3] = 0;
+        }
+        ctx.putImageData(d, 0, 0);
+        resolve(c.toDataURL());
+      } catch { resolve(src); }
     };
+    img.onerror = () => resolve(src);
     img.src = src;
   });
 }
@@ -136,9 +139,9 @@ export function ImageMapPage() {
 
   const base = import.meta.env.BASE_URL;
   const LIBRARY = [
-    { src: `${base}library/Type=Calendar.png`,   label: "Calendar" },
-    { src: `${base}library/Type=Map.png`,         label: "Map"      },
-    { src: `${base}library/Promotion (1).png`,    label: "Sparkle"  },
+    { src: `${base}library/Type=Calendar.png`,        label: "Calendar" },
+    { src: `${base}library/Type=Map.png`,             label: "Map"      },
+    { src: `${base}library/Promotion%20(1).png`,      label: "Sparkle"  },
   ];
 
   useEffect(() => {
@@ -536,31 +539,32 @@ export function ImageMapPage() {
           )}
         </div>
 
-        <div className="imap-library-row">
-          <button className="imap-library-toggle" onClick={() => setLibOpen(o => !o)}>
-            {libOpen ? "Hide library ↑" : "Use a template ↓"}
-          </button>
-          {libOpen && (
-            <div className="imap-library">
-              {LIBRARY.map(({ src, label }, i) => (
-                <button key={src} className="imap-library-icon" onClick={() => handleLibrarySelect(libImages[i] ?? src)}>
-                  {libImages[i]
-                    ? <img src={libImages[i]} alt={label} />
-                    : <span className="imap-library-loading" />}
-                  <span className="imap-library-label">{label}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
         {!isPrinted && (
           <>
             {!isDrawing && (
-              <label className="imap-upload-btn">
-                {imageUrl ? "Change image" : "Upload image"}
-                <input type="file" accept="image/*" onChange={handleUpload} hidden />
-              </label>
+              <>
+                <label className="imap-upload-btn">
+                  {imageUrl ? "Change image" : "Upload image"}
+                  <input type="file" accept="image/*" onChange={handleUpload} hidden />
+                </label>
+                <div className="imap-library-row">
+                  <button className="imap-library-toggle" onClick={() => setLibOpen(o => !o)}>
+                    {libOpen ? "Hide templates ↑" : "Use a template ↓"}
+                  </button>
+                  {libOpen && (
+                    <div className="imap-library">
+                      {LIBRARY.map(({ src, label }, i) => (
+                        <button key={src} className="imap-library-icon" onClick={() => handleLibrarySelect(libImages[i] ?? src)}>
+                          {libImages[i]
+                            ? <img src={libImages[i]} alt={label} />
+                            : <span className="imap-library-loading" />}
+                          <span className="imap-library-label">{label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
             {imageUrl && !isDrawing && (
               <button className="imap-draw-btn" onClick={handleDraw}>Draw streets</button>
