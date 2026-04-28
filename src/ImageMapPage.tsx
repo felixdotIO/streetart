@@ -139,9 +139,9 @@ export function ImageMapPage() {
 
   const base = import.meta.env.BASE_URL;
   const LIBRARY = [
-    { src: `${base}library/Type=Calendar.png`,        label: "Calendar" },
-    { src: `${base}library/Type=Map.png`,             label: "Map"      },
-    { src: `${base}library/Type=Promotion%20(1).png`,  label: "Sparkle"  },
+    { src: `${base}library/10YRS-Ahead-icon.png`, label: "10YRS" },
+    { src: `${base}library/Type=Map.png`,         label: "Map"   },
+    { src: `${base}library/Bear_Purple.png`,      label: "Bear"  },
   ];
 
   useEffect(() => {
